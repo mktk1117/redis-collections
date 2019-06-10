@@ -6,11 +6,14 @@ import abc
 from decimal import Decimal
 from fractions import Fraction
 import pickle
+import msgpack
+import msgpack_numpy
 import uuid
 
 import redis
 
 NUMERIC_TYPES = (int,) + (float, Decimal, Fraction, complex)
+msgpack_numpy.patch()
 
 
 class RedisCollection(metaclass=abc.ABCMeta):
@@ -23,7 +26,7 @@ class RedisCollection(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def __init__(
-        self, redis=None, key=None, pickle_protocol=pickle.HIGHEST_PROTOCOL
+        self, redis=None, key=None, serializer='msgpack', pickle_protocol=pickle.HIGHEST_PROTOCOL
     ):
         """
         :param data: Initial data.
@@ -43,6 +46,7 @@ class RedisCollection(metaclass=abc.ABCMeta):
         self._redis_version = None  # Determined if needed and cached
         self.key = key or self._create_key()
 
+        self.serializer = serializer
         self.pickle_protocol = pickle_protocol
 
     def _create_redis(self):
@@ -86,7 +90,10 @@ class RedisCollection(metaclass=abc.ABCMeta):
         :type data: anything serializable
         :rtype: bytes
         """
-        return pickle.dumps(data, protocol=self.pickle_protocol)
+        if self.serializer == 'msgpack':
+            return msgpack.packb(data, use_bin_type=True)
+        else:
+            return pickle.dumps(data, protocol=self.pickle_protocol)
 
     def _pickle_3(self, data):
         # Several numeric types are equal, have the same hash, but nonetheless
@@ -102,7 +109,10 @@ class RedisCollection(metaclass=abc.ABCMeta):
             if data == int_data:
                 data = int_data
 
-        return pickle.dumps(data, protocol=self.pickle_protocol)
+        if self.serializer == 'msgpack':
+            return msgpack.packb(data, use_bin_type=True)
+        else:
+            return pickle.dumps(data, protocol=self.pickle_protocol)
 
     def _unpickle(self, pickled_data):
         """Convert *pickled_data* to a Python object and return it.
@@ -111,7 +121,11 @@ class RedisCollection(metaclass=abc.ABCMeta):
         :type pickled_data: bytes
         :rtype: anything serializable
         """
-        return pickle.loads(pickled_data) if pickled_data else None
+        if self.serializer == 'msgpack':
+            return msgpack.unpackb(pickled_data, raw=False) if pickled_data else None
+        else:
+            return pickle.loads(pickled_data) if pickled_data else None
+
 
     def _clear(self, pipe=None):
         """Helper for clear operations.
